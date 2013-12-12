@@ -2,29 +2,36 @@ package main
 
 import (
 	"flag"
-	"fmt"
+    "time"
 	"log"
 	"net/http"
-	"path/filepath"
+    "camlistore.org/ui"
 )
 
-var passfile = flag.String("passfile", "passwords", "username:password list")
-var simultaneous = flag.Int("sim", 1, "Simultaneous attacks")
-var dev = flag.Bool("devmode", false, "Dev mode serves up")
-
+func serveStaticFile(rw http.ResponseWriter, req *http.Request, root http.FileSystem, file string) {
+	f, err := root.Open("/" + file)
+	if err != nil {
+		http.NotFound(rw, req)
+		log.Printf("Failed to open file %q from uistatic.Files: %v", file, err)
+		return
+	}
+	defer f.Close()
+	var modTime time.Time
+	if fi, err := f.Stat(); err == nil {
+		modTime = fi.ModTime()
+	}
+	http.ServeContent(rw, req, file, modTime, f)
+}
 
 func f() func(w http.ResponseWriter, r *http.Request) {
 	res := func(w http.ResponseWriter, r *http.Request) {
 		//		log.Printf("Does %s have the same suffix as %s?  (I'll decide)", r.URL.Path, name)
         name := r.URL.Path
-        cwd, err := filepath.Abs(".")
-        if err != nil {
-            log.Fatal(err)
+        log.Println(name)
+        if name == "/" {
+            name = "index.html"
         }
-
-        full := fmt.Sprintf("%s/%s", cwd, name)
-        log.Printf("ServeFile: %s", full)
-        http.ServeFile(w, r, full)
+        serveStaticFile(w, r, ui.Files, name)
 	}
 	return res
 }

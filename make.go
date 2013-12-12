@@ -72,7 +72,7 @@ var (
 	// Our temporary source tree root and build dir, i.e: buildGoPath + "src/camlistore.org"
 	buildSrcDir string
 	// files mirrored from camRoot to buildSrcDir
-	rxMirrored = regexp.MustCompile(`^([a-zA-Z0-9\-\_]+\.(?:go|html|js|css|png|jpg|gif|ico|gpg|json|err|camli|svg))$`)
+	rxMirrored = regexp.MustCompile(`^.git*$`)
 )
 
 func main() {
@@ -92,7 +92,7 @@ func main() {
     if len(flag.Args()) == 0 {
         log.Fatalf("You must specify a directory to embed")
     }
-    embedthese := []string{buildSrcPath(flag.Args()[0])}
+    embedthese := []string{flag.Args()[0]}
 
 	if err := os.MkdirAll(buildSrcDir, 0755); err != nil {
 		log.Fatal(err)
@@ -106,16 +106,31 @@ func main() {
 		log.Printf("Output binaries: %s", binDir)
 	}
 
-	// dance to its own func.
 	// We copy all *.go files from camRoot's goDirs to buildSrcDir.
 	goDirs := []string{"cmd", "pkg"}
 
+	var latestSrcMod time.Time
+	for _, dir := range embedthese {
+        oriPath := filepath.FromSlash(dir)
+		dstPath := buildUIPath()
+        log.Printf("mirrorDir(%s, %s)\n", oriPath, dstPath)
+		if maxMod, err := mirrorDir(oriPath, dstPath); err != nil {
+			log.Fatalf("Error while mirroring %s to %s: %v", oriPath, dstPath, err)
+		} else {
+			if maxMod.After(latestSrcMod) {
+				latestSrcMod = maxMod
+			}
+
+		}
+	}
+
+
 	// Copy files we do want in our mirrored GOPATH.  This has the side effect of
 	// populating wantDestFile, populated by mirrorFile.
-	var latestSrcMod time.Time
 	for _, dir := range goDirs {
 		oriPath := filepath.Join(camRoot, filepath.FromSlash(dir))
 		dstPath := buildSrcPath(dir)
+        log.Printf("mirrorDir(%s, %s)\n", oriPath, dstPath)
 		if maxMod, err := mirrorDir(oriPath, dstPath); err != nil {
 			log.Fatalf("Error while mirroring %s to %s: %v", oriPath, dstPath, err)
 		} else {
@@ -129,7 +144,7 @@ func main() {
 
 	buildAll := true
 	targs := []string{
-		"camlistore.org/proggy",
+		"camlistore.org/cmd",
 	}
 	if *targets != "" {
 		if t := strings.Split(*targets, ","); len(t) != 0 {
@@ -140,7 +155,12 @@ func main() {
     if err = buildGenfileembed(); err != nil {
         log.Fatal(err)
     }
-    if err = genEmbeds(embedthese); err != nil {
+    src := "fileembed.go"
+    dst := filepath.Join(buildUIPath(), src)
+    if err := mirrorFile(src, dst); err != nil {
+        log.Fatalf("Error copying %s to %s: %v", src, dst, err)
+    }
+    if err = genEmbeds([]string{buildUIPath()}); err != nil {
         log.Fatal(err)
     }
 
@@ -272,9 +292,13 @@ func buildSrcPath(fromSrc string) string {
 	return filepath.Join(buildSrcDir, filepath.FromSlash(fromSrc))
 }
 
+func buildUIPath() string {
+    return filepath.Join(buildSrcDir, "ui")
+}
+
 // genEmbeds generates from the static resources the zembed.*.go
 // files that will allow for these resources to be included in
-// the camlistored binary.
+// the binary.
 // It also populates wantDestFile with those files so they're
 // kept in between runs.
 func genEmbeds(uiEmbeds []string) error {
@@ -413,13 +437,14 @@ func verifyGoVersion() {
 func mirrorDir(src, dst string) (maxMod time.Time, err error) {
 	err = filepath.Walk(src, func(path string, fi os.FileInfo, err error) error {
 		if err != nil {
+            log.Println("Error:", err)
 			return err
 		}
 		base := fi.Name()
 		if fi.IsDir() {
 			return nil
 		}
-		if strings.HasPrefix(base, ".#") || !rxMirrored.MatchString(base) {
+		if strings.HasPrefix(base, ".#") || strings.Contains(path, ".git") || rxMirrored.MatchString(base) {
 			return nil
 		}
 		suffix, err := filepath.Rel(src, path)
